@@ -1,0 +1,11 @@
+[package]
+name = "wd-passport-rust"
+version = "0.1.0"
+authors = ["Thomas Harris <teh019283@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+libc = "0.2.55"
+
+[build-dependencies]
+bindgen = "0.49.1"
