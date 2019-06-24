@@ -4,7 +4,10 @@
 use std::convert::TryFrom;
 use std::env;
 use std::fs::OpenOptions;
+use std::io::Write;
 use std::os::unix::io::AsRawFd;
+
+use termion::input::TermRead;
 
 use crate::status::{CipherId, InvalidStatusSignature, KeyResetEnabler, SecurityStatus};
 
@@ -39,7 +42,7 @@ type Result<T> = std::result::Result<T, Box<std::error::Error>>;
  */
 
 /*
- * From 0-duke/wdpassport-utils
+ * From https://github.com/0-duke/wdpassport-utils
  *
  * SecurityStatus: 
  *      0x00 => No lock
@@ -100,6 +103,47 @@ fn sg_read(fd: i32, cmd: &mut [u8], buf: &mut [std::os::raw::c_uchar]) -> std::i
     Ok((io.dxfer_len - io.resid as u32) as usize)
 }
 
+fn sg_write(fd: i32, cmd: &mut [u8], buf: &mut [std::os::raw::c_uchar]) -> std::io::Result<()> {
+    use std::os::raw;
+    use std::io;
+
+    let mut sense = [0 as raw::c_uchar; 32];
+    let io = debug_bindings::sg_io_hdr {
+        interface_id: 'S' as raw::c_int,
+        dxfer_direction: debug_bindings::SG_DXFER_TO_DEV,
+        cmd_len: cmd.len() as u8,
+        mx_sb_len: sense.len() as u8,
+        iovec_count: 0,
+        dxfer_len: buf.len() as u32,
+        dxferp: buf.as_mut_ptr() as *mut raw::c_void,
+        cmdp: cmd.as_mut_ptr(),
+        sbp: sense.as_mut_ptr(),
+        timeout: 20_000,
+        flags: 0,
+        pack_id: 0,
+        usr_ptr: std::ptr::null_mut(),
+        status: 0,
+        masked_status: 0,
+        msg_status: 0,
+        sb_len_wr: 0,
+        host_status: 0,
+        driver_status: 0,
+        resid: 0,
+        duration: 0,
+        info: 0,
+    };
+
+    let r = unsafe { libc::ioctl(fd, debug_bindings::SG_IO as u64, &io) };
+
+    if r == -1 {
+        return Err(io::Error::last_os_error());
+    } else if (io.info & debug_bindings::SG_INFO_OK_MASK) != debug_bindings::SG_INFO_OK {
+        return Err(io::Error::new(io::ErrorKind::Other, "SCSI error"));
+    }
+
+    Ok(())
+}
+
 fn get_encryption_status(fd: i32) -> Result<(SecurityStatus, CipherId, KeyResetEnabler)> {
     let mut buf = [0u8; 512];
     let mut cdb: [u8; 10] = [0xC0, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00];
@@ -115,6 +159,28 @@ fn get_encryption_status(fd: i32) -> Result<(SecurityStatus, CipherId, KeyResetE
     let key_reset_enabler = status::KeyResetEnabler([buf[8], buf[9], buf[10], buf[12]]);
 
     Ok((security, cipher, key_reset_enabler))
+}
+
+fn unlock(fd: i32, password: String) {
+    let cdb: [u8; 10] = [0xC1, 0xE1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00];
+
+    let pw_block: [u8; 6] = [0x45, 0x00, 0x00, 0x00, 0x00, 0x00];
+}
+
+fn read_password() -> std::io::Result<String> {
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    let stdin = std::io::stdin();
+    let mut stdin = stdin.lock();
+
+    stdout.write_all(b"Drive password: ");
+    stdout.flush().unwrap();
+
+    let pass = stdin.read_passwd(&mut stdout)?;
+
+    stdout.write_all(b"\n");
+    stdout.flush().unwrap();
+    Ok(pass.unwrap())
 }
 
 fn main() -> Result<()> {
