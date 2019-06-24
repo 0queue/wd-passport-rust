@@ -7,6 +7,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 
+use byteorder::ByteOrder;
+use byteorder::LittleEndian;
 use termion::input::TermRead;
 
 use crate::status::{CipherId, InvalidStatusSignature, KeyResetEnabler, SecurityStatus};
@@ -161,6 +163,47 @@ fn get_encryption_status(fd: i32) -> Result<(SecurityStatus, CipherId, KeyResetE
     Ok((security, cipher, key_reset_enabler))
 }
 
+fn hsb_checksum(buf: &[u8]) -> u8 {
+    let mut c = 0i32;
+
+    for i in 0..510 {
+        c += buf[i] as i32;
+    }
+
+    c += buf[0] as i32;
+
+    ((c * -1) & 0xFF) as u8
+}
+
+fn read_handy_store_block1(fd: i32) -> Result<(u32, [u8; 10])> {
+    let mut buf = [0u8; 512];
+    let mut cdb: [u8; 10] = [0xD8, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00];
+
+    sg_read(fd, &mut cdb, &mut buf)?;
+
+    // checksum
+    if hsb_checksum(&buf) != buf[511] {
+        Err(format!("Checksum {} does not match expected {}", hsb_checksum(&buf), buf[511]))?;
+    }
+
+    // signature
+    let signature: [u8; 4] = [0x00, 0x01, 0x44, 0x57];
+    for i in 0..4 {
+        if signature[i] != buf[i] {
+            Err(format!("Signature mismatch at {}: Found {} expected {}", i, buf[i], signature[i]))?;
+        }
+    }
+
+    let iteration = LittleEndian::read_u32(&buf[8..12]);
+    let mut salt = [0u8; 10];
+    for i in 12..20 {
+        salt[i - 12] = buf[i];
+    }
+    // TODO password hint here
+
+    Ok((iteration, salt))
+}
+
 fn unlock(fd: i32, password: String) {
     let cdb: [u8; 10] = [0xC1, 0xE1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00];
 
@@ -173,12 +216,12 @@ fn read_password() -> std::io::Result<String> {
     let stdin = std::io::stdin();
     let mut stdin = stdin.lock();
 
-    stdout.write_all(b"Drive password: ");
+    stdout.write_all(b"Drive password: ").unwrap();
     stdout.flush().unwrap();
 
     let pass = stdin.read_passwd(&mut stdout)?;
 
-    stdout.write_all(b"\n");
+    stdout.write_all(b"\n").unwrap();
     stdout.flush().unwrap();
     Ok(pass.unwrap())
 }
@@ -194,6 +237,8 @@ fn main() -> Result<()> {
     let (security, cipher, key_reset_enabler) = get_encryption_status(file.as_raw_fd())?;
 
     println!("SecurityStatus: {:?}, CipherId: {:?}, Key Reset Enabler: {:?}", security, cipher, key_reset_enabler);
+
+    let (iteration, salt) = read_handy_store_block1(file.as_raw_fd())?;
 
     drop(file);
     Ok(())
