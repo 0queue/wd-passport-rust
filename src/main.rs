@@ -9,6 +9,7 @@ use std::os::unix::io::AsRawFd;
 
 use byteorder::ByteOrder;
 use byteorder::LittleEndian;
+use byteorder::NetworkEndian;
 use sha2::Digest;
 use sha2::Sha256;
 use termion::input::TermRead;
@@ -234,7 +235,7 @@ fn hash_password(password: String, iterations: u32, salt: [u8; 10]) -> Vec<u8> {
     salted.append(&mut utf16_le(password));
 
     let mut res = salted;
-    for i in 0..iterations {
+    for _ in 0..iterations {
         let mut hasher = Sha256::default();
         hasher.input(res);
         res = hasher.result().to_vec();
@@ -263,9 +264,38 @@ fn test_hash_password() {
 }
 
 fn unlock(fd: i32, password: String) {
-    let cdb: [u8; 10] = [0xC1, 0xE1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00];
+    // from WD_Encryption_API.txt:
+    //                  OPCODE,SUBCODE, V-------reserved-------V   data length, control
+    let mut cdb: [u8; 10] = [0xC1, 0xE1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00];
 
-    let pw_block: [u8; 6] = [0x45, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let mut pw_block: [u8; 8] = [0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+    let (iterations, salt) = read_handy_store_block1(fd).unwrap();
+    let mut hashed = hash_password(password, iterations, salt);
+
+    // this is a bit extra since I'm only concerned about sha256 == len of 32
+    NetworkEndian::write_u16(&mut pw_block[6..], hashed.len() as u16);
+
+    let mut pw_block = pw_block.to_vec();
+    pw_block.append(&mut hashed);
+
+    let attempt = sg_write(fd, &mut cdb, &mut pw_block);
+
+    if attempt.is_ok() {
+        println!("Success! Drive status:");
+        println!("{:?}", get_encryption_status(fd));
+    } else {
+        eprintln!("Wrong password");
+    }
+}
+
+#[test]
+fn test_network_endian() {
+    let mut buf = [0u8; 2];
+
+    NetworkEndian::write_u16(&mut buf, 32);
+
+    assert_eq!(buf, [0u8, 32u8]);
 }
 
 #[test]
@@ -321,6 +351,9 @@ fn main() -> Result<()> {
     let (iteration, salt) = read_handy_store_block1(file.as_raw_fd())?;
 
     println!("iter: {} salt: {:?}", iteration, salt);
+
+    let password = read_password().unwrap();
+    unlock(file.as_raw_fd(), password);
 
     drop(file);
     Ok(())
