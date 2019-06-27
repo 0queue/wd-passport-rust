@@ -9,6 +9,8 @@ use std::os::unix::io::AsRawFd;
 
 use byteorder::ByteOrder;
 use byteorder::LittleEndian;
+use sha2::Digest;
+use sha2::Sha256;
 use termion::input::TermRead;
 
 use crate::status::{CipherId, InvalidStatusSignature, KeyResetEnabler, SecurityStatus};
@@ -45,8 +47,9 @@ type Result<T> = std::result::Result<T, Box<std::error::Error>>;
 
 /*
  * From https://github.com/0-duke/wdpassport-utils
+ * also ended up learning a bunch from https://github.com/KenMacD/wdpassport-utils
  *
- * SecurityStatus: 
+ * SecurityStatus:
  *      0x00 => No lock
  *      0x01 => Locked
  *      0x02 => Unlocked
@@ -63,10 +66,9 @@ type Result<T> = std::result::Result<T, Box<std::error::Error>>;
 ## KeyResetEnabler (4 bytes that change every time)
  */
 
-
 fn sg_read(fd: i32, cmd: &mut [u8], buf: &mut [std::os::raw::c_uchar]) -> std::io::Result<usize> {
-    use std::os::raw;
     use std::io;
+    use std::os::raw;
 
     let mut sense = [0 as raw::c_uchar; 32];
     let io = debug_bindings::sg_io_hdr {
@@ -106,8 +108,8 @@ fn sg_read(fd: i32, cmd: &mut [u8], buf: &mut [std::os::raw::c_uchar]) -> std::i
 }
 
 fn sg_write(fd: i32, cmd: &mut [u8], buf: &mut [std::os::raw::c_uchar]) -> std::io::Result<()> {
-    use std::os::raw;
     use std::io;
+    use std::os::raw;
 
     let mut sense = [0 as raw::c_uchar; 32];
     let io = debug_bindings::sg_io_hdr {
@@ -183,14 +185,21 @@ fn read_handy_store_block1(fd: i32) -> Result<(u32, [u8; 10])> {
 
     // checksum
     if hsb_checksum(&buf) != buf[511] {
-        Err(format!("Checksum {} does not match expected {}", hsb_checksum(&buf), buf[511]))?;
+        Err(format!(
+            "Checksum {} does not match expected {}",
+            hsb_checksum(&buf),
+            buf[511]
+        ))?;
     }
 
     // signature
     let signature: [u8; 4] = [0x00, 0x01, 0x44, 0x57];
     for i in 0..4 {
         if signature[i] != buf[i] {
-            Err(format!("Signature mismatch at {}: Found {} expected {}", i, buf[i], signature[i]))?;
+            Err(format!(
+                "Signature mismatch at {}: Found {} expected {}",
+                i, buf[i], signature[i]
+            ))?;
         }
     }
 
@@ -201,13 +210,81 @@ fn read_handy_store_block1(fd: i32) -> Result<(u32, [u8; 10])> {
     }
     // TODO password hint here
 
+    // salt is pretty much always utf-16-le encoded null terminated "WDC."
     Ok((iteration, salt))
+}
+
+fn utf16_le(string: String) -> Vec<u8> {
+    string
+        .encode_utf16()
+        .map(|utf16| {
+            let mut res = vec![0u8; 2];
+            LittleEndian::write_u16(&mut res, utf16);
+            res
+        })
+        .flatten()
+        .collect()
+}
+
+fn hash_password(password: String, iterations: u32, salt: [u8; 10]) -> Vec<u8> {
+    // 1. Prepend salt w/o utf-16 null terminator to utf-16 password
+    // 2. hash it iterations number of times
+
+    let mut salted = (&salt[..salt.len() - 2]).to_vec();
+    salted.append(&mut utf16_le(password));
+
+    let mut res = salted;
+    for i in 0..iterations {
+        let mut hasher = Sha256::default();
+        hasher.input(res);
+        res = hasher.result().to_vec();
+    }
+
+    res
+}
+
+#[test]
+fn test_hash_password() {
+    // a result I got from copy pasting the results
+    // of the wdc() function in the cookpw.py script from KenMacD
+    let expected: Vec<u8> = vec![
+        0x58, 0x1d, 0xe8, 0xd4, 0x33, 0xc, 0x2d, 0x36, 0x20, 0x70, 0x6f, 0x3b, 0x7f, 0xe6, 0x88,
+        0xfa, 0xdc, 0x0, 0xca, 0x89, 0x8a, 0x28, 0xef, 0x10, 0xbf, 0x1b, 0x68, 0xa8, 0xa2, 0x14,
+        0x4, 0xd2,
+    ];
+    let actual = hash_password(
+        "Hello".to_string(),
+        1000,
+        [0x057, 0x00, 0x44, 0x00, 0x43, 0x00, 0x2e, 0x00, 0x00, 0x00],
+    );
+
+    assert_eq!(expected.len(), actual.len());
+    assert_eq!(expected, actual);
 }
 
 fn unlock(fd: i32, password: String) {
     let cdb: [u8; 10] = [0xC1, 0xE1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00];
 
     let pw_block: [u8; 6] = [0x45, 0x00, 0x00, 0x00, 0x00, 0x00];
+}
+
+#[test]
+fn test_utf_16_le() {
+    let mut wdc = "WDC.".to_string();
+
+    // turns out the default python str.encode("utf-16") is little endian
+    // so to replicate...
+    let res = wdc
+        .encode_utf16()
+        .map(|utf16| {
+            let mut res = vec![0u8; 2];
+            LittleEndian::write_u16(&mut res, utf16);
+            res
+        })
+        .flatten()
+        .collect::<Vec<u8>>();
+
+    assert_eq!(res, vec![0x57, 0x00, 0x44, 0x00, 0x43, 0x00, 0x2e, 0x00])
 }
 
 fn read_password() -> std::io::Result<String> {
@@ -236,9 +313,14 @@ fn main() -> Result<()> {
 
     let (security, cipher, key_reset_enabler) = get_encryption_status(file.as_raw_fd())?;
 
-    println!("SecurityStatus: {:?}, CipherId: {:?}, Key Reset Enabler: {:?}", security, cipher, key_reset_enabler);
+    println!(
+        "SecurityStatus: {:?}, CipherId: {:?}, Key Reset Enabler: {:?}",
+        security, cipher, key_reset_enabler
+    );
 
     let (iteration, salt) = read_handy_store_block1(file.as_raw_fd())?;
+
+    println!("iter: {} salt: {:?}", iteration, salt);
 
     drop(file);
     Ok(())

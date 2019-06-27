@@ -3,7 +3,10 @@ use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Formatter;
 
-use crate::status::CipherId::{AES_128_CBC, AES_128_ECB, AES_128_XTS, AES_256_CBC, AES_256_ECB, AES_256_XTS, FullDiskEncryption};
+use crate::status::CipherId::{
+    FullDiskEncryption, AES_128_CBC, AES_128_ECB, AES_128_XTS, AES_256_CBC, AES_256_ECB,
+    AES_256_XTS,
+};
 
 #[derive(Debug, Clone)]
 pub enum SecurityStatus {
@@ -84,7 +87,7 @@ impl TryFrom<u8> for CipherId {
             0x22 => AES_256_CBC,
             0x28 => AES_256_XTS,
             0x30 => FullDiskEncryption,
-            _ => return Err(CipherIdUnknownError)
+            _ => return Err(CipherIdUnknownError),
         })
     }
 }
