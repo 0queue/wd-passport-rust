@@ -3,10 +3,13 @@ use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Formatter;
 
-use crate::status::CipherId::{
-    FullDiskEncryption, AES_128_CBC, AES_128_ECB, AES_128_XTS, AES_256_CBC, AES_256_ECB,
-    AES_256_XTS,
-};
+use self::CipherId::FullDiskEncryption;
+use self::CipherId::AES_128_CBC;
+use self::CipherId::AES_128_ECB;
+use self::CipherId::AES_128_XTS;
+use self::CipherId::AES_256_CBC;
+use self::CipherId::AES_256_ECB;
+use self::CipherId::AES_256_XTS;
 
 #[derive(Debug, Clone)]
 pub enum SecurityStatus {
