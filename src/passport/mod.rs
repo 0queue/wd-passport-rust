@@ -11,106 +11,78 @@ use byteorder::LittleEndian;
 use sha2::Digest;
 use sha2::Sha256;
 
-use crate::passport::status::CipherId;
-use crate::passport::status::CipherIdUnknownError;
-use crate::passport::status::InvalidStatusSignature;
-use crate::passport::status::KeyResetEnabler;
-use crate::passport::status::SecurityStatus;
-use crate::passport::status::SecurityStatusUnknownError;
+use crate::passport::errors::CipherId;
+use crate::passport::errors::CipherIdUnknownError;
+use crate::passport::errors::HandyStoreBlock1Error;
+use crate::passport::errors::InvalidStatusSignature;
+use crate::passport::errors::KeyResetEnabler;
+use crate::passport::errors::SecurityStatus;
+use crate::passport::errors::SecurityStatusUnknownError;
+use crate::passport::errors::StatusError;
 
+pub mod errors;
 mod sg;
-pub mod status;
 
 pub struct Passport {
     backing_file: File,
 }
 
-#[derive(Debug)]
-pub enum StatusError {
-    Signature(InvalidStatusSignature),
-    Security(SecurityStatusUnknownError),
-    Cipher(CipherIdUnknownError),
-    IO(std::io::Error),
+#[derive(Debug, Clone)]
+pub enum SecurityStatus {
+    NoLock,
+    Locked,
+    Unlocked,
+    Blocked,
+    NoKeys,
 }
 
-impl From<std::io::Error> for StatusError {
-    fn from(error: std::io::Error) -> Self {
-        StatusError::IO(error)
+impl TryFrom<u8> for SecurityStatus {
+    type Error = SecurityStatusUnknownError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0x00 => SecurityStatus::NoLock,
+            0x01 => SecurityStatus::Locked,
+            0x02 => SecurityStatus::Unlocked,
+            0x06 => SecurityStatus::Blocked,
+            0x07 => SecurityStatus::NoKeys,
+            _ => {
+                return Err(SecurityStatusUnknownError);
+            }
+        })
     }
 }
 
-impl From<InvalidStatusSignature> for StatusError {
-    fn from(error: InvalidStatusSignature) -> Self {
-        StatusError::Signature(error)
+#[derive(Debug, Clone)]
+pub enum CipherId {
+    AES_128_ECB,
+    AES_128_CBC,
+    AES_128_XTS,
+    AES_256_ECB,
+    AES_256_CBC,
+    AES_256_XTS,
+    FullDiskEncryption,
+}
+
+impl TryFrom<u8> for CipherId {
+    type Error = CipherIdUnknownError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0x10 => CipherId::AES_128_ECB,
+            0x12 => CipherId::AES_128_CBC,
+            0x18 => CipherId::AES_128_XTS,
+            0x20 => CipherId::AES_256_ECB,
+            0x22 => CipherId::AES_256_CBC,
+            0x28 => CipherId::AES_256_XTS,
+            0x30 => CipherId::FullDiskEncryption,
+            _ => return Err(CipherIdUnknownError),
+        })
     }
 }
 
-impl From<SecurityStatusUnknownError> for StatusError {
-    fn from(error: SecurityStatusUnknownError) -> Self {
-        StatusError::Security(error)
-    }
-}
-
-impl From<CipherIdUnknownError> for StatusError {
-    fn from(error: CipherIdUnknownError) -> Self {
-        StatusError::Cipher(error)
-    }
-}
-
-impl std::error::Error for StatusError {
-    fn description(&self) -> &str {
-        match self {
-            StatusError::Signature(e) => e.description(),
-            StatusError::Security(e) => e.description(),
-            StatusError::Cipher(e) => e.description(),
-            StatusError::IO(e) => e.description(),
-        }
-    }
-}
-
-impl Display for StatusError {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
-        match self {
-            StatusError::Signature(e) => e.fmt(f),
-            StatusError::Security(e) => e.fmt(f),
-            StatusError::Cipher(e) => e.fmt(f),
-            StatusError::IO(e) => e.fmt(f),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum HandyStoreBlock1Error {
-    IO(std::io::Error),
-    Signature(String),
-    Checksum(String),
-}
-
-impl Display for HandyStoreBlock1Error {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
-        match self {
-            HandyStoreBlock1Error::IO(e) => e.fmt(f),
-            HandyStoreBlock1Error::Signature(s) => write!(f, "{}", s),
-            HandyStoreBlock1Error::Checksum(s) => write!(f, "{}", s),
-        }
-    }
-}
-
-impl std::error::Error for HandyStoreBlock1Error {
-    fn description(&self) -> &str {
-        match self {
-            HandyStoreBlock1Error::IO(e) => e.description(),
-            HandyStoreBlock1Error::Signature(s) => s,
-            HandyStoreBlock1Error::Checksum(s) => s,
-        }
-    }
-}
-
-impl From<std::io::Error> for HandyStoreBlock1Error {
-    fn from(e: std::io::Error) -> Self {
-        HandyStoreBlock1Error::IO(e)
-    }
-}
+#[derive(Debug, Clone)]
+pub struct KeyResetEnabler(pub [u8; 4]);
 
 /// A struct representing a connected Western Digital Passport
 impl Passport {
@@ -171,9 +143,9 @@ impl Passport {
             return Err(StatusError::from(InvalidStatusSignature));
         }
 
-        let security = status::SecurityStatus::try_from(buf[3])?;
-        let cipher = status::CipherId::try_from(buf[4])?;
-        let key_reset_enabler = status::KeyResetEnabler([buf[8], buf[9], buf[10], buf[11]]);
+        let security = errors::SecurityStatus::try_from(buf[3])?;
+        let cipher = errors::CipherId::try_from(buf[4])?;
+        let key_reset_enabler = errors::KeyResetEnabler([buf[8], buf[9], buf[10], buf[11]]);
 
         Ok((security, cipher, key_reset_enabler))
     }
@@ -229,7 +201,11 @@ impl Passport {
         // signature
         let signature: [u8; 4] = [0x00, 0x01, 0x44, 0x57];
         if signature != buf[0..4] {
-            let msg = format!("Signature mismatch: Found {:?} expected {:?}", &buf[0..4], signature);
+            let msg = format!(
+                "Signature mismatch: Found {:?} expected {:?}",
+                &buf[0..4],
+                signature
+            );
             return Err(HandyStoreBlock1Error::Signature(msg));
         }
 
@@ -284,7 +260,6 @@ impl Passport {
     }
 }
 
-
 /// Sum of all the bits, but then for some reason
 /// multiplied by -1
 fn handy_store_block_checksum(buf: &[u8]) -> u8 {
@@ -337,9 +312,9 @@ mod test {
         // a result I got from copy pasting the results
         // of the wdc() function in the cookpw.py script from KenMacD
         let expected: Vec<u8> = vec![
-            0x58, 0x1d, 0xe8, 0xd4, 0x33, 0xc, 0x2d, 0x36, 0x20, 0x70, 0x6f, 0x3b, 0x7f, 0xe6, 0x88,
-            0xfa, 0xdc, 0x0, 0xca, 0x89, 0x8a, 0x28, 0xef, 0x10, 0xbf, 0x1b, 0x68, 0xa8, 0xa2, 0x14,
-            0x4, 0xd2,
+            0x58, 0x1d, 0xe8, 0xd4, 0x33, 0xc, 0x2d, 0x36, 0x20, 0x70, 0x6f, 0x3b, 0x7f, 0xe6,
+            0x88, 0xfa, 0xdc, 0x0, 0xca, 0x89, 0x8a, 0x28, 0xef, 0x10, 0xbf, 0x1b, 0x68, 0xa8,
+            0xa2, 0x14, 0x4, 0xd2,
         ];
         let actual = hash_password(
             "Hello",
