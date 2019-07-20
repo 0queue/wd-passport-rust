@@ -11,14 +11,11 @@ use byteorder::LittleEndian;
 use sha2::Digest;
 use sha2::Sha256;
 
-use crate::passport::errors::CipherId;
 use crate::passport::errors::CipherIdUnknownError;
+use crate::passport::errors::StatusError;
 use crate::passport::errors::HandyStoreBlock1Error;
 use crate::passport::errors::InvalidStatusSignature;
-use crate::passport::errors::KeyResetEnabler;
-use crate::passport::errors::SecurityStatus;
 use crate::passport::errors::SecurityStatusUnknownError;
-use crate::passport::errors::StatusError;
 
 pub mod errors;
 mod sg;
@@ -102,7 +99,7 @@ impl Passport {
     }
 
     fn fd(&self) -> i32 {
-        self.backing_file.as_raw_fd()
+        self.backing_file.as_raw_fd() as i32
     }
 
     /// Returns how the drive is locked, the kind of cipher in use, and the 4 bytes used
@@ -143,9 +140,9 @@ impl Passport {
             return Err(StatusError::from(InvalidStatusSignature));
         }
 
-        let security = errors::SecurityStatus::try_from(buf[3])?;
-        let cipher = errors::CipherId::try_from(buf[4])?;
-        let key_reset_enabler = errors::KeyResetEnabler([buf[8], buf[9], buf[10], buf[11]]);
+        let security = SecurityStatus::try_from(buf[3])?;
+        let cipher = CipherId::try_from(buf[4])?;
+        let key_reset_enabler = KeyResetEnabler([buf[8], buf[9], buf[10], buf[11]]);
 
         Ok((security, cipher, key_reset_enabler))
     }
