@@ -30,7 +30,7 @@ fn read_password() -> std::io::Result<String> {
     Ok(pass.unwrap())
 }
 
-fn main() -> Result<(), Box<std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
     let passport = passport::Passport::new(args.get(1).unwrap())?;

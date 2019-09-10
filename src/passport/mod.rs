@@ -1,7 +1,5 @@
 use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::fmt::Display;
-use std::fmt::Formatter;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
@@ -299,7 +297,7 @@ fn hash_password(password: &str, iterations: u32, salt: [u8; 8]) -> Vec<u8> {
     res
 }
 
-#[test]
+#[cfg(test)]
 mod test {
     use crate::passport::hash_password;
     use crate::passport::utf16_le;
@@ -325,7 +323,7 @@ mod test {
 
     #[test]
     fn test_utf_16_le() {
-        let mut wdc = "WDC.".to_string();
+        let wdc = "WDC.".to_string();
 
         // turns out the default python str.encode("utf-16") is little endian
         // so to replicate...
