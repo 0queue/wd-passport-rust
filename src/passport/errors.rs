@@ -1,20 +1,15 @@
 use core::fmt;
-use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 /// Unknown security status
 #[derive(Debug, Clone)]
 pub struct SecurityStatusUnknownError;
 
-impl std::error::Error for SecurityStatusUnknownError {
-    fn description(&self) -> &str {
-        "Unknown security status"
-    }
-}
+impl std::error::Error for SecurityStatusUnknownError {}
 
 impl std::fmt::Display for SecurityStatusUnknownError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", self.description())
+        write!(f, "Unknown security status")
     }
 }
 
@@ -22,15 +17,11 @@ impl std::fmt::Display for SecurityStatusUnknownError {
 #[derive(Debug, Clone)]
 pub struct CipherIdUnknownError;
 
-impl std::error::Error for CipherIdUnknownError {
-    fn description(&self) -> &str {
-        "Unknown cipher"
-    }
-}
+impl std::error::Error for CipherIdUnknownError {}
 
 impl Display for CipherIdUnknownError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", self.description())
+        write!(f, "Unknown Cipher")
     }
 }
 
@@ -38,15 +29,11 @@ impl Display for CipherIdUnknownError {
 #[derive(Debug, Clone)]
 pub struct InvalidStatusSignature;
 
-impl std::error::Error for InvalidStatusSignature {
-    fn description(&self) -> &str {
-        "Invalid encryption status signature"
-    }
-}
+impl std::error::Error for InvalidStatusSignature {}
 
 impl std::fmt::Display for InvalidStatusSignature {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", self.description())
+        write!(f, "Invalid encryption status signature")
     }
 }
 
@@ -59,16 +46,7 @@ pub enum StatusError {
     IO(std::io::Error),
 }
 
-impl std::error::Error for StatusError {
-    fn description(&self) -> &str {
-        match self {
-            StatusError::Signature(e) => e.description(),
-            StatusError::Security(e) => e.description(),
-            StatusError::Cipher(e) => e.description(),
-            StatusError::IO(e) => e.description(),
-        }
-    }
-}
+impl std::error::Error for StatusError {}
 
 impl Display for StatusError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
@@ -124,15 +102,7 @@ impl Display for HandyStoreBlock1Error {
     }
 }
 
-impl std::error::Error for HandyStoreBlock1Error {
-    fn description(&self) -> &str {
-        match self {
-            HandyStoreBlock1Error::IO(e) => e.description(),
-            HandyStoreBlock1Error::Signature(s) => s,
-            HandyStoreBlock1Error::Checksum(s) => s,
-        }
-    }
-}
+impl std::error::Error for HandyStoreBlock1Error {}
 
 impl From<std::io::Error> for HandyStoreBlock1Error {
     fn from(e: std::io::Error) -> Self {
